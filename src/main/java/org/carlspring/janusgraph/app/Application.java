@@ -29,6 +29,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Import;
 
 @SpringBootApplication()
@@ -43,8 +45,11 @@ public class Application implements CommandLineRunner
     private static final String ARTIFACT_ENTRY = "ArtifactEntry";
 
     @Inject
+    private ConfigurableApplicationContext applicationContext;
+    
+    @Inject
     private JanusGraph janusGraph;
-
+    
     public static void main(String[] args)
     {
         SpringApplication.run(Application.class, args);
@@ -71,6 +76,8 @@ public class Application implements CommandLineRunner
         {
             logger.error(String.format("Failed to drop Janusgraph instance: [%s]", janusGraph), e);
         }
+        
+        applicationContext.close();
         
         System.exit(0);
     }
