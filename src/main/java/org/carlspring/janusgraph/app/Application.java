@@ -6,6 +6,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 
 import javax.inject.Inject;
 
@@ -15,13 +16,19 @@ import org.carlspring.janusgraph.cassandra.CassandraEmbeddedConfig;
 import org.carlspring.janusgraph.cassandra.JanusGraphConfig;
 import org.janusgraph.core.Cardinality;
 import org.janusgraph.core.JanusGraph;
-import org.janusgraph.core.JanusGraphFactory;
+import org.janusgraph.core.JanusGraphManagerUtility;
 import org.janusgraph.core.Multiplicity;
 import org.janusgraph.core.PropertyKey;
 import org.janusgraph.core.VertexLabel;
+import org.janusgraph.core.schema.JanusGraphIndex;
 import org.janusgraph.core.schema.JanusGraphManagement;
+import org.janusgraph.core.schema.SchemaAction;
+import org.janusgraph.diskstorage.Backend;
+import org.janusgraph.graphdb.configuration.GraphDatabaseConfiguration;
+import org.janusgraph.graphdb.database.StandardJanusGraph;
 import org.janusgraph.graphdb.database.management.GraphIndexStatusReport;
 import org.janusgraph.graphdb.database.management.ManagementSystem;
+import org.janusgraph.util.system.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
@@ -29,7 +36,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Import;
 
@@ -67,15 +73,27 @@ public class Application implements CommandLineRunner
         logger.info("Search result: [{}]", searchResult);
         
         g.tx().rollback();
-        
+
         try
         {
-            JanusGraphFactory.drop(janusGraph);
+            StandardJanusGraph standardGanusGraph = (StandardJanusGraph)janusGraph;
+            JanusGraphManagerUtility.getInstance().removeGraph(standardGanusGraph.getGraphName());
+            GraphDatabaseConfiguration config = standardGanusGraph.getConfiguration();
+            Backend backend = config.getBackend();
+            try
+            {
+                backend.clearStorage();
+            } 
+            finally
+            {
+                IOUtils.closeQuietly(backend);
+            }
         }
         catch (Exception e)
         {
             logger.error(String.format("Failed to drop Janusgraph instance: [%s]", janusGraph), e);
         }
+
         
         applicationContext.close();
         
@@ -117,6 +135,19 @@ public class Application implements CommandLineRunner
         {
             GraphIndexStatusReport report = ManagementSystem.awaitGraphIndexStatus(jg, janusGraphIndex).call();
             logger.info("Index status report: \n{}", report);
+            jgm = jg.openManagement();
+            logger.info(String.format("Enabling index [%s]", janusGraphIndex));
+            try
+            {
+                jgm .updateIndex(jgm .getGraphIndex(janusGraphIndex), SchemaAction.ENABLE_INDEX).get();
+                jgm.commit();
+                logger.info(String.format("Enabled index [%s]", janusGraphIndex));
+            }
+            catch (ExecutionException e)
+            {
+                logger.error(String.format("Failed to enable index [%s]", janusGraphIndex), e);
+                jgm.rollback();
+            }
         }
 
         jgm = jg.openManagement();
@@ -133,11 +164,11 @@ public class Application implements CommandLineRunner
         PropertyKey propertyPath = jgm.getPropertyKey("path");
         VertexLabel vertexLabel = jgm.getVertexLabel(ARTIFACT_COORDINATES);
 
-        result.add(jgm.buildIndex(ARTIFACT_COORDINATES + ".path", Vertex.class)
+        JanusGraphIndex index = jgm.buildIndex(ARTIFACT_COORDINATES + ".path", Vertex.class)
                       .addKey(propertyPath)
                       .indexOnly(vertexLabel)
-                      .buildCompositeIndex()
-                      .name());
+                      .buildCompositeIndex();
+        result.add(index.name());
 
         return result;
     }
